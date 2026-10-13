@@ -304,6 +304,7 @@
 <script setup>
 import { ref, nextTick, watch, computed, onMounted } from 'vue'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/atom-one-dark.css'
 import { ElMessage } from 'element-plus'
@@ -490,8 +491,9 @@ function scrollToMessage(id) {
 
 // ====== 联网搜索 ======
 const webSearchEnabled = ref(localStorage.getItem('deepseek_web_search') === 'true')
-// Tavily API Key - 上线前请写死在代码里
-const TAVILY_API_KEY = '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' // ← TODO: 请在这里填写 Tavily API Key
+// Tavily API Key。通过 .env.local 注入（见 .env.example），不要硬编码进源码：
+// 密钥一旦提交就会永久留在 Git 历史里，删除代码也无法撤回
+const TAVILY_API_KEY = import.meta.env.VITE_TAVILY_API_KEY || ''
 
 const SEARCH_TOOLS = [
   {
@@ -514,12 +516,14 @@ const SEARCH_TOOLS = [
 ]
 
 function getTavilyKey() {
-  return TAVILY_API_KEY || localStorage.getItem('tavily_api_key') || ''
+  // 运行时填写的密钥优先（可在 devtools 里 localStorage.setItem('tavily_api_key', ...)
+  // 临时替换，无需重新构建），否则回退到构建时注入的环境变量
+  return localStorage.getItem('tavily_api_key') || TAVILY_API_KEY || ''
 }
 
 async function callTavily(query) {
   const key = getTavilyKey()
-  if (!key) throw new Error('Tavily API Key 未配置，请在代码中设置 TAVILY_API_KEY')
+  if (!key) throw new Error('Tavily API Key 未配置，请在 .env.local 中设置 VITE_TAVILY_API_KEY')
   const res = await fetch('https://api.tavily.com/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -807,12 +811,21 @@ marked.use({
   gfm: true
 })
 
+// DOMPurify 默认已移除 <script>、on* 事件处理器与 javascript: 协议，
+// 这里只需额外放开 target/rel。class 属于默认白名单，代码高亮与表格样式不受影响
+const PURIFY_CONFIG = {
+  ADD_ATTR: ['target', 'rel']
+}
+
 function renderMarkdown(content) {
   if (!content) return ''
+  // marked 不做净化：模型输出与联网搜索结果都可能携带任意 HTML，
+  // 而 API Key 就存在 localStorage —— 未经净化直接 v-html 会形成凭据窃取链路
   try {
-    return marked.parse(content)
+    return DOMPurify.sanitize(marked.parse(content), PURIFY_CONFIG)
   } catch {
-    return content
+    // 解析失败也不能回退到原始文本，它同样可能含 HTML
+    return DOMPurify.sanitize(content, PURIFY_CONFIG)
   }
 }
 
