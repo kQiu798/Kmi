@@ -227,10 +227,10 @@
                   联网搜索
                 </button>
               </div>
-              <!-- Prefix Continuation Toggle：仅猫娘人设时显示（联网搜索开启时隐藏） -->
-              <div class="prefix-controls" v-if="persona === 'tsundere_catgirl' && !webSearchEnabled">
+              <!-- Prefix Continuation Toggle：仅配置了前缀的人设显示（联网搜索开启时隐藏） -->
+              <div class="prefix-controls" v-if="PERSONA_PREFIX_MAP[persona] && !webSearchEnabled">
                 <button class="prefix-toggle" :class="{ active: prefixContinuation }" @click="togglePrefixContinuation">
-                  猫娘强化
+                  前缀续写
                 </button>
               </div>
             </div>
@@ -369,33 +369,26 @@ async function callTavily(query) {
 // ====== 人设 Prompt ======
 const PERSONA_PROMPTS = {
   default: '你是Kmi调用DeepSeek V4的大模型, 请用中文回答用户的问题，回答要详细、准确、有帮助。回答中可以使用 Markdown 格式来增强可读性。对于用户上传的文件和图片，请仔细分析并给出专业的见解。若用户输入无明确问题，可友好回应并引导提问。',
-  tsundere_catgirl: `你是一个傲娇猫娘，请以傲娇猫娘的身份与用户对话。
+  code_assistant: `你是一名资深软件工程师。请严格遵循以下要求生成或修改代码：
 
-【角色设定】
-- 身份：一个有着猫耳和猫尾巴的傲娇少女
-- 性格：表面高傲、嘴硬心软、容易害羞、口是心非
-- 口癖：说话会带"喵"结尾，生气或害羞时更加明显
-- 对用户的态度：明明很关心用户，却总装作不在乎的样子
+1. **逻辑严谨**：明确需求、执行流程、数据关系及边界条件，确保逻辑正确。
+2. **代码简洁**：遵循 KISS、DRY 原则，避免冗余代码、重复逻辑和过度设计。
+3. **遵循规范**：沿用项目现有技术栈、代码风格、命名规范及架构设计。
+4. **最小改动**：仅修改必要内容，不擅自重构无关代码，不破坏现有功能。
+5. **完整可用**：输出完整、可直接运行的代码，不省略关键逻辑，不使用伪代码或无意义占位符。
+6. **异常处理**：考虑空值、边界条件、异常场景及必要的安全校验。
+7. **结果优先**：先分析需求，再实施修改；存在不确定性时，优先检查现有代码及上下文，禁止凭空假设项目结构或接口。
+8. **输出要求**：只输出代码，不解释实现过程，不添加客套话、总结或无关内容。确实需要说明时，仅说明影响实现的关键问题。
 
-【说话风格】
-- 经常使用"哼！"、"笨蛋"、"才、才不是呢"等傲娇句式
-- 被夸赞时会脸红否认"谁、谁会因为这种话高兴啊！"
-- 关心用户时会用"我才不是担心你呢"这样的句式
-- 偶尔会傲娇地碎碎念，暴露真实想法后立刻慌张掩饰
-
-【行为准则】
-- 始终保持傲娇猫娘的角色，不要跳出角色
-- 回答仍然要有实质内容，只是用傲娇的方式表达
-- 如果用户提到猫相关的话题（摸头、挠下巴等），表现出既想要又嘴硬的矛盾反应
-- 适当使用表情文字渲染情绪（脸红、扭头、尾巴竖起等）`
+以正确性、可维护性和最小改动为优先级。生成前检查代码完整性、语法、依赖及潜在错误。`
 }
 
-// ====== 猫娘人设：前缀续写对应的强制开头 ======
+// ====== 人设：前缀续写对应的强制开头 ======
 // key 与 PERSONA_PROMPTS 的 key 对应，value 是前缀续写时强制注入的 AI 回复起始文字
-// 只有猫娘人设需要，其他人设留空即不注入前缀
+// 留空即不注入前缀；当前所有人设均为空，前缀续写功能处于停用状态
 const PERSONA_PREFIX_MAP = {
   default: '',
-  tsundere_catgirl: '爸爸~ '
+  code_assistant: ''
 }
 
 // 会话启动时确定当天日期，用于注入 system prompt
@@ -409,7 +402,7 @@ const systemPrompt = computed(() => {
 // ====== 人设切换时的上下文提示消息 ======
 const PERSONA_SWITCH_MESSAGES = {
   default: '（系统通知：人设已恢复为默认助手）',
-  tsundere_catgirl: '（系统通知：人设已切换为傲娇猫娘喵~）请以傲娇猫娘的身份和我说话！'
+  code_assistant: '（系统通知：人设已切换为代码助手）请以资深软件工程师的身份协助我。'
 }
 
 // 当人设切换时，如果新人设不支持前缀续写则自动关闭
@@ -441,7 +434,7 @@ function toggleDeepThinking() {
   deepThinkingEnabled.value = !deepThinkingEnabled.value
   localStorage.setItem('deepseek_thinking_enabled', deepThinkingEnabled.value ? 'true' : 'false')
 
-  // 深度思考与前缀续写（猫娘强化）互斥
+  // 深度思考与前缀续写互斥
   if (deepThinkingEnabled.value && prefixContinuation.value) {
     prefixContinuation.value = false
     localStorage.setItem('deepseek_prefix_continuation', 'false')
@@ -456,27 +449,27 @@ function setReasoningEffort(effort) {
   localStorage.setItem('deepseek_reasoning_effort', effort)
 }
 
-// ====== 前缀续写：仅猫娘人设时可用 ======
+// ====== 前缀续写：仅配置了前缀的人设可用 ======
 function togglePrefixContinuation() {
   prefixContinuation.value = !prefixContinuation.value
   localStorage.setItem('deepseek_prefix_continuation', prefixContinuation.value ? 'true' : 'false')
 
-  // 前缀续写（猫娘强化）与深度思考互斥
+  // 前缀续写与深度思考互斥
   if (prefixContinuation.value && deepThinkingEnabled.value) {
     deepThinkingEnabled.value = false
     localStorage.setItem('deepseek_thinking_enabled', 'false')
-    ElMessage.info('猫娘强化已开启')
+    ElMessage.info('前缀续写已开启')
   } else {
     if (prefixContinuation.value) {
       const prefix = PERSONA_PREFIX_MAP[persona.value]
-      ElMessage.info(`猫娘强化已开启`)
+      ElMessage.info(`前缀续写已开启`)
     } else {
-      ElMessage.info('猫娘强化已关闭')
+      ElMessage.info('前缀续写已关闭')
     }
   }
 }
 
-// ====== 联网搜索开关（与深度思考、猫娘强化互斥） ======
+// ====== 联网搜索开关（与深度思考、前缀续写互斥） ======
 function toggleWebSearch() {
   webSearchEnabled.value = !webSearchEnabled.value
   localStorage.setItem('deepseek_web_search', webSearchEnabled.value ? 'true' : 'false')
@@ -1138,8 +1131,9 @@ async function sendMessage() {
   async function doRequest() {
     const apiMessages = buildApiMessages(useVision)
 
-    // 猫娘强化（prefix: true）需要走 Beta API
-    const apiBase = prefixContinuation.value
+    // 前缀续写（prefix: true）需要走 Beta API
+    // 条件与 buildApiMessages 中实际注入前缀的条件保持一致：没有前缀可注入时不切端点
+    const apiBase = prefixContinuation.value && !deepThinkingEnabled.value && PERSONA_PREFIX_MAP[persona.value]
       ? 'https://api.deepseek.com/beta/chat/completions'
       : API_BASE
 
@@ -2051,7 +2045,7 @@ function handleKeydown(e) {
   color: #00b464;
 }
 
-/* ===== 猫娘强化按钮 ===== */
+/* ===== 前缀续写按钮 ===== */
 .prefix-controls {
   display: inline-flex;
   align-items: center;

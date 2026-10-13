@@ -29,7 +29,7 @@
         </div>
         <el-select v-model="localPersona" class="persona-select" size="large">
           <el-option label="默认助手" value="default" />
-          <el-option label="傲娇猫娘" value="tsundere_catgirl" />
+          <el-option label="代码助手" value="code_assistant" />
         </el-select>
         <p class="tip">人设决定了 AI 的回复风格和语气。</p>
       </div>
