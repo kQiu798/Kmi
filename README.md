@@ -1,6 +1,6 @@
 # Kmi
 
-核心功能(实现得相当完整)
+核心功能
 1.  双模型切换 —— Flash / Pro 通过两个按钮切 MODEL_MAP,modelType 持久化到 localStorage。
 2.  深度思考 —— thinking: {type} + reasoning_effort 三档(Low / High / Max),思考过程用可折叠块实时流式展示(ChatView.vue:82-92)。
 3.  联网搜索 —— Tavily 搜索 -> 结果作为独立 user 消息注入(ChatView.vue:1210-1219),刻意不塞进 system prompt 以规避 DeepSeek 内容过滤,有注释说明,是有意为之的设计。
