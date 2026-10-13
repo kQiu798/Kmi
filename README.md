@@ -20,6 +20,8 @@
 | **Markdown 渲染** | 代码块语法高亮（highlight.js）+ 一键复制 |
 | **响应式** | 600 / 480 / 360px 三档断点适配移动端 |
 
+<img src="./public/img_project/示例图.png" alt="Screenshot">
+
 ### 关于「前缀续写」
 
 代码中保留了 DeepSeek Beta API 的前缀续写（`prefix: true`）能力，由 `PERSONA_PREFIX_MAP` 控制每个角色的强制开头。当前所有角色均为空字符串，即该功能处于**停用状态**。填入起始文字即可启用。
