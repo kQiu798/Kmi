@@ -5,6 +5,31 @@
       <div class="header-inner">
         <div class="logo-area">
           <span class="logo-text"><img :src="logoSrc" alt="Kmi" class="header-logo" /></span>
+          <!-- 人设切换：点击展开下拉，选择结果持久化到本地缓存 -->
+          <el-dropdown trigger="click" popper-class="persona-dropdown" @command="handlePersonaCommand">
+            <button type="button" class="persona-btn" :title="`当前人设：${personaLabel}`">
+              <span class="persona-btn-name">{{ personaLabel }}</span>
+              <el-icon class="persona-caret">
+                <ArrowDown />
+              </el-icon>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item v-for="opt in PERSONA_OPTIONS" :key="opt.value" :command="opt.value"
+                  :class="{ 'persona-item-active': persona === opt.value }">
+                  <span class="persona-item">
+                    <span class="persona-item-text">
+                      <span class="persona-item-name">{{ opt.label }}</span>
+                      <span class="persona-item-desc">{{ opt.desc }}</span>
+                    </span>
+                    <el-icon v-if="persona === opt.value" class="persona-item-check">
+                      <Check />
+                    </el-icon>
+                  </span>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
         <div class="header-actions">
           <!-- <el-tooltip content="查询余额" placement="bottom">
@@ -57,7 +82,7 @@
                   <div v-if="msg.content" class="msg-text">{{ msg.content }}</div>
                   <div v-if="msg.files && msg.files.length" class="msg-files">
                     <div v-for="(f, fi) in msg.files" :key="fi" class="msg-file-item">
-                      <img v-if="f.isImage" :src="f.dataUrl" :alt="f.name" class="uploaded-image"
+                      <img v-if="f.isImage && f.dataUrl" :src="f.dataUrl" :alt="f.name" class="uploaded-image"
                         @click="previewImage(f.dataUrl)" />
                       <div v-else class="file-info">
                         <span class="file-info-icon">📄</span>
@@ -275,7 +300,7 @@ import 'highlight.js/styles/atom-one-dark.css'
 import { ElMessage } from 'element-plus'
 import {
   Setting, Delete, Promotion, TopRight,
-  Paperclip, Close, Coin
+  Paperclip, Close, Coin, ArrowDown, Check
 } from '@element-plus/icons-vue'
 import SettingsDialog from './SettingsDialog.vue'
 import logoSrc from '../assets/logo.png'
@@ -283,9 +308,92 @@ import logoSrc from '../assets/logo.png'
 // ====== API 地址 ======
 const API_BASE = 'https://api.deepseek.com/chat/completions'
 
+// ====== 本地缓存：对话历史 ======
+const HISTORY_KEY = 'deepseek_chat_history'
+// localStorage 通常上限 5MB，留出余量给其余配置键，超出即逐级降级
+const HISTORY_BUDGET = 3.5 * 1024 * 1024
+let historyWarned = false
+
+// 反序列化：逐条校验，缓存损坏或结构不符时安全丢弃，避免渲染期崩溃
+function loadHistory() {
+  let raw = null
+  try {
+    raw = localStorage.getItem(HISTORY_KEY)
+  } catch {
+    return [] // 隐私模式下 localStorage 可能直接抛错
+  }
+  if (!raw) return []
+
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(isValidMessage).map(m => ({
+      ...m,
+      versions: Array.isArray(m.versions) ? m.versions : undefined,
+      currentVersion: Number.isInteger(m.currentVersion) ? m.currentVersion : 0
+    }))
+  } catch {
+    return []
+  }
+}
+
+function isValidMessage(m) {
+  return !!m
+    && typeof m === 'object'
+    && typeof m.content === 'string'
+    && (m.role === 'user' || m.role === 'assistant')
+}
+
+// 序列化：withFilePayload 为 false 时剥离体积不可控的图片/文本文件内容，只留元信息
+function serializeHistory(msgs, withFilePayload) {
+  return JSON.stringify(msgs.map(m => {
+    if (!Array.isArray(m.files) || m.files.length === 0) return m
+    return {
+      ...m,
+      files: m.files.map(f => {
+        const meta = { name: f.name, type: f.type, size: f.size, isImage: !!f.isImage }
+        return withFilePayload ? { ...meta, dataUrl: f.dataUrl, textContent: f.textContent } : meta
+      })
+    }
+  }))
+}
+
+function writeHistory(withFilePayload) {
+  let payload
+  try {
+    payload = serializeHistory(messages.value, withFilePayload)
+  } catch {
+    return false // 存在循环引用等异常，放弃本档
+  }
+  if (payload.length > HISTORY_BUDGET) return false
+  try {
+    localStorage.setItem(HISTORY_KEY, payload)
+    return true
+  } catch {
+    return false // 配额超限或存储被禁用
+  }
+}
+
+// 写入失败不影响对话本身，仅提示一次，避免每次保存都打扰用户
+function warnHistoryOnce(text) {
+  if (historyWarned) return
+  historyWarned = true
+  ElMessage.warning(text)
+}
+
+// 先完整保存；超限则剥离文件负载重试；仍失败则放弃本次持久化
+function persistHistory() {
+  if (writeHistory(true)) return
+  if (writeHistory(false)) {
+    warnHistoryOnce('对话历史较大，图片与文件内容未写入本地缓存（刷新后仅保留文件名）')
+    return
+  }
+  warnHistoryOnce('本地缓存空间不足，本次对话未能保存')
+}
+
 // ====== 状态 ======
 const apiKey = ref(localStorage.getItem('deepseek_api_key') || '')
-const messages = ref([])
+const messages = ref(loadHistory())
 const inputText = ref('')
 const loading = ref(false)
 const streamingContent = ref('')
@@ -295,6 +403,10 @@ const showSettings = ref(!apiKey.value)
 const messagesRef = ref(null)
 const fileInputRef = ref(null)
 const pendingFiles = ref([])
+
+// 对话变化即写入本地缓存。messages 只在离散时机变动（发送、回复完成、切换版本、清空），
+// 流式过程走 streamingContent，不会逐 token 触发这里
+watch(messages, persistHistory, { deep: true })
 
 // 图片预览
 const previewVisible = ref(false)
@@ -316,6 +428,23 @@ const reasoningEffort = ref(localStorage.getItem('deepseek_reasoning_effort') ||
 // ====== 前缀续写 & 人设 ======
 const prefixContinuation = ref(localStorage.getItem('deepseek_prefix_continuation') === 'true')
 const persona = ref(localStorage.getItem('deepseek_persona') || 'default')
+
+// 人设选项：标签、说明与取值集中在此，供顶部切换下拉复用
+const PERSONA_OPTIONS = [
+  { label: '默认助手', desc: '通用对话助手，回答详细准确', value: 'default' },
+  { label: '代码助手', desc: '资深软件工程师，只输出代码', value: 'code_assistant' }
+]
+
+const personaLabel = computed(() =>
+  PERSONA_OPTIONS.find(o => o.value === persona.value)?.label || PERSONA_OPTIONS[0].label
+)
+
+// 顶部下拉切换人设：只负责赋值与持久化，副作用由 watch(persona) 统一处理
+function handlePersonaCommand(command) {
+  if (command === persona.value) return
+  persona.value = command
+  localStorage.setItem('deepseek_persona', command)
+}
 
 // ====== 联网搜索 ======
 const webSearchEnabled = ref(localStorage.getItem('deepseek_web_search') === 'true')
@@ -660,7 +789,7 @@ watch([messages, streamingContent, streamingReasoning, loading], () => {
     injectCopyButtons()
     scrollToBottom()
   })
-}, { deep: true })
+}, { deep: true, immediate: true })
 
 function injectCopyButtons() {
   document.querySelectorAll('.markdown-body pre').forEach((pre) => {
@@ -1004,8 +1133,12 @@ function buildContentWithImages(text, files) {
   const textFileContents = []
 
   for (const f of files) {
-    if (f.isImage) {
+    if (f.isImage && f.dataUrl) {
       imageParts.push({ type: 'image_url', image_url: { url: f.dataUrl } })
+    } else if (f.isImage) {
+      // 从本地缓存恢复的历史消息：图片负载未保留，退化为文字说明，
+      // 避免发出 url 为 undefined 的非法 image_url 导致接口报错
+      textFileContents.push(`--- 图片: ${f.name}（历史记录，原图未保留）---`)
     } else if (f.textContent) {
       textFileContents.push(`--- 文件: ${f.name} ---\n${f.textContent}\n--- 文件结束 ---`)
     }
@@ -1417,6 +1550,13 @@ function handleKeydown(e) {
   padding: 8px 24px;
 }
 
+.logo-area {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .logo-text {
   font-size: 22px;
   font-weight: 700;
@@ -1432,6 +1572,44 @@ function handleKeydown(e) {
   width: auto;
   vertical-align: middle;
   margin-top: 4px;
+}
+
+/* ===== 人设切换（幽灵按钮：无边框无底色，悬停出浅灰底） ===== */
+.persona-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #1a1a1a;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s;
+}
+
+.persona-btn:hover {
+  background: #f2f3f5;
+}
+
+.persona-btn:focus-visible {
+  outline: 2px solid rgba(22, 119, 255, 0.4);
+  outline-offset: -1px;
+}
+
+.persona-caret {
+  font-size: 13px;
+  color: #8a8f99;
+  transition: color 0.2s;
+}
+
+.persona-btn:hover .persona-caret {
+  color: #1a1a1a;
 }
 
 .header-actions {
@@ -2173,6 +2351,73 @@ function handleKeydown(e) {
   padding-bottom: 4px !important;
 }
 
+/* ===== 人设切换下拉面板（菜单 teleport 到 body，不参与 scoped） ===== */
+.persona-dropdown.el-popper {
+  padding: 0;
+  border: 1px solid #eceef2;
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.08);
+}
+
+.persona-dropdown .el-dropdown-menu {
+  padding: 6px;
+  min-width: 212px;
+  background: transparent;
+}
+
+.persona-dropdown .el-dropdown-menu__item {
+  padding: 0;
+  border-radius: 8px;
+  line-height: 1.4;
+}
+
+.persona-dropdown .el-dropdown-menu__item:not(.is-disabled):hover,
+.persona-dropdown .el-dropdown-menu__item:not(.is-disabled):focus {
+  background: #f5f6f8;
+  color: inherit;
+}
+
+.persona-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+}
+
+.persona-item-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.persona-item-name {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #1a1a1a;
+}
+
+.persona-item-desc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: #909399;
+  white-space: normal;
+}
+
+.persona-item-check {
+  flex-shrink: 0;
+  font-size: 15px;
+  color: #1677ff;
+}
+
+.persona-dropdown .el-dropdown-menu__item.persona-item-active .persona-item-name {
+  color: #1677ff;
+  font-weight: 600;
+}
+
 /* ===== 代码块复制按钮（全局，JS 注入不参与 scoped） ===== */
 .copy-code-btn {
   position: absolute;
@@ -2224,6 +2469,11 @@ function handleKeydown(e) {
     height: 30px;
   }
 
+  .persona-btn {
+    font-size: 14px;
+    padding: 4px 7px;
+  }
+
   .messages-inner {
     padding: 0 12px;
   }
@@ -2264,6 +2514,11 @@ function handleKeydown(e) {
 
   .header-logo {
     height: 28px;
+  }
+
+  .persona-btn {
+    font-size: 14px;
+    padding: 4px 6px;
   }
 
   .chat-header {
@@ -2424,6 +2679,11 @@ function handleKeydown(e) {
 
   .header-logo {
     height: 24px;
+  }
+
+  .persona-btn {
+    font-size: 13px;
+    padding: 3px 5px;
   }
 
   .header-actions {
