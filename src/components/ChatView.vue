@@ -48,6 +48,14 @@
 
     <!-- ====== 消息列表区域 ====== -->
     <div class="messages-area" ref="messagesRef">
+      <!-- 问题锚点：一个提问一个锚点，悬浮预览问题全文，点击跳转 -->
+      <nav v-if="questionAnchors.length > 1" class="anchor-nav" aria-label="问题导航"
+        :style="{ gap: anchorGap + 'px' }">
+        <el-tooltip v-for="a in questionAnchors" :key="a.id" :content="a.label" placement="left"
+          :show-after="100" :offset="14" popper-class="anchor-tooltip">
+          <button type="button" class="anchor-tick" :aria-label="a.label" @click="scrollToMessage(a.id)"></button>
+        </el-tooltip>
+      </nav>
       <div class="messages-inner">
         <!-- 欢迎页（空状态） -->
         <div v-if="messages.length === 0 && !streamingContent && !streamingReasoning && !loading" class="welcome">
@@ -70,7 +78,8 @@
         </div>
 
         <!-- 消息列表 -->
-        <div v-for="msg in messages" :key="msg.id" class="message-wrapper" :class="msg.role">
+        <div v-for="msg in messages" :key="msg.id" :data-msg-id="msg.id" class="message-wrapper"
+          :class="msg.role">
           <div class="message-row">
             <div class="avatar" v-if="msg.role === 'assistant'">
               <span class="avatar-ai">AI</span>
@@ -444,6 +453,39 @@ function handlePersonaCommand(command) {
   if (command === persona.value) return
   persona.value = command
   localStorage.setItem('deepseek_persona', command)
+}
+
+// ====== 左侧问题锚点 ======
+// 一个问题一个锚点。切换人设时以 user 身份插入的系统通知不算提问，需要排除
+const questionAnchors = computed(() =>
+  messages.value
+    .filter(m => m.role === 'user')
+    .filter(m => !(m.content || '').startsWith('（系统通知：'))
+    .map(m => ({ id: m.id, label: anchorLabel(m) }))
+)
+
+// 悬浮提示用的完整问题文本：无文字（纯附件/纯图片）时退回附件说明
+function anchorLabel(m) {
+  const text = (m.content || '').trim()
+  if (text) return text
+  return m.files && m.files.length ? `[${m.files.length} 个附件]` : '（空消息）'
+}
+
+// 锚点过多时收紧间距，避免导航条超出可视高度
+const anchorGap = computed(() => {
+  const n = questionAnchors.value.length
+  if (n <= 12) return 8
+  if (n <= 24) return 5
+  return 3
+})
+
+// 跳转到指定消息。逐个比对而非拼接 CSS 选择器，避免 id 中的特殊字符破坏 querySelector
+function scrollToMessage(id) {
+  const container = messagesRef.value
+  if (!container) return
+  const target = Array.from(container.querySelectorAll('[data-msg-id]'))
+    .find(node => node.dataset.msgId === id)
+  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 // ====== 联网搜索 ======
@@ -1631,6 +1673,66 @@ function handleKeydown(e) {
   padding: 0 15px;
 }
 
+/* ========== 问题锚点导航 ==========
+   用 fixed 而非 absolute：.messages-area 本身是滚动容器，absolute 会相对整段
+   可滚动内容定位（锚点会随内容滚走）；fixed 才恒定贴在可视区右侧 */
+.anchor-nav {
+  position: fixed;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  /* gap 由 anchorGap 动态给出 */
+  padding: 6px 0;
+}
+
+/* 命中区固定为 22×14，可见短条由 ::before 画。
+   hover 只改颜色、不改尺寸：若对锚点本身做 scale，它会从光标底下长开，
+   长出后 hover 失效又缩回，如此往复 —— 表现为光标在手型和箭头间反复闪。
+   命中区不随 hover 变化，抖动就没有成因。 */
+.anchor-tick {
+  position: relative;
+  display: block;
+  width: 22px;
+  height: 14px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.anchor-tick::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 4px;
+  width: 14px;
+  height: 4px;
+  background: #d0d4dc;
+  border-radius: 2px;
+  transition: background 0.2s, width 0.2s;
+}
+
+.anchor-tick:hover::before {
+  width: 18px;
+  background: #1677ff;
+}
+
+.anchor-tick:focus-visible {
+  outline: 2px solid rgba(22, 119, 255, 0.4);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+/* 贴在屏幕右侧意味着窄屏会压住正文，此时隐藏比遮挡更好 */
+@media (max-width: 900px) {
+  .anchor-nav {
+    display: none;
+  }
+}
+
 /* ===== 欢迎页 ===== */
 .welcome {
   display: flex;
@@ -1710,6 +1812,8 @@ function handleKeydown(e) {
 /* ===== 消息行 ===== */
 .message-wrapper {
   margin-bottom: 20px;
+  /* 锚点跳转时给顶部留一点余量，避免标题贴着可视区上沿 */
+  scroll-margin-top: 12px;
 }
 
 .message-row {
@@ -2416,6 +2520,19 @@ function handleKeydown(e) {
 .persona-dropdown .el-dropdown-menu__item.persona-item-active .persona-item-name {
   color: #1677ff;
   font-weight: 600;
+}
+
+/* ===== 问题锚点悬浮提示（tooltip teleport 到 body，不参与 scoped） =====
+   Element Plus 2.x 的 el-tooltip 没有 __content 内层包裹，文本直接落在
+   .el-popper 根节点上，所以限宽与换行只能写在根节点。
+   基础样式已带 overflow-wrap: break-word，这里补下限宽与换行符保留 */
+.anchor-tooltip.el-popper {
+  max-width: 340px;
+  padding: 7px 12px;
+  line-height: 1.55;
+  text-align: left;
+  /* 提问里常含换行，按原样展示而不是压成一行 */
+  white-space: pre-wrap;
 }
 
 /* ===== 代码块复制按钮（全局，JS 注入不参与 scoped） ===== */
