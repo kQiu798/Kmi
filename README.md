@@ -53,7 +53,7 @@ npm run preview  # 预览构建产物
 
 ### 2. Tavily API Key（仅联网搜索需要）
 
-在 [tavily.com](https://tavily.com) 申请后，**通过环境变量注入，不要写进源码**：
+在 [tavily.com](https://tavily.com)(每个月有 1000 积分免费使用) 申请后，**通过环境变量注入，不要写进源码**：
 
 1. 复制 `.env.example` 为 `.env.local`（`.env.local` 已被 `.gitignore` 忽略，不会被提交）
 2. 填入密钥：
